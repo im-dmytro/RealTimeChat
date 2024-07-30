@@ -1,0 +1,90 @@
+﻿@page "/chat";
+@page "/";
+@using Microsoft.AspNetCore.SignalR.Client
+@using RealTimeChat.Server.Services
+@using RealTimeChat.Shared
+@using MudBlazor;
+@inject NavigationManager NavigationManager
+@inject HttpClient http
+
+<PageTitle>Chat</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="my-4">
+    <MudPaper Class="pa-4">
+        <MudText Typo="Typo.h4" GutterBottom>Chat</MudText>
+        @if (IsConnected)
+        {
+            <MudGrid>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="userInput" Label="User Name" Variant="Variant.Filled" />
+                </MudItem>
+                <MudItem xs="12" sm="6">
+                    <MudTextField @bind-Value="messageInput" Label="Message" Variant="Variant.Filled" />
+                </MudItem>
+                <MudItem xs="12">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Send">Send</MudButton>
+                </MudItem>
+                <MudItem xs="12">
+                    <MudList T="string">
+                        @foreach (var message in messages)
+                        {
+                        <MudListItem>
+                            <MudText>@message</MudText>
+                        </MudListItem>
+                        }
+                    </MudList>
+                </MudItem>
+            </MudGrid>
+        }
+        else
+        {
+            <MudText Color="Color.Error">Connecting...</MudText>
+        }
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private HubConnection hubConnection;
+    private List<string> messages = new List<string>();
+    private string userInput;
+    private string messageInput;
+    private string sentimentResult;
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+        .WithUrl(NavigationManager.ToAbsoluteUri("/chatHub"))
+        .Build();
+        hubConnection.On<string, string, string>("RecieveMessage", async (user, message, sentiment) =>
+        {
+            var encodingMsg = $"{user}: {message} (sentiment is {sentiment})";
+            messages.Add(encodingMsg);
+
+            StateHasChanged();
+        });
+        await hubConnection.StartAsync();
+    }
+    async Task Send()
+    {
+        var result = await GetSentimentResultAsync();
+        sentimentResult = result.ToString();
+        await SaveMessage(sentimentResult);
+
+        await hubConnection.SendAsync("SendMessage", userInput, messageInput, sentimentResult);
+    }
+
+    public bool IsConnected => hubConnection.State == HubConnectionState.Connected;
+
+    public async Task SaveMessage(string sentiment)
+    {
+        var message = new ChatMessage() { FromUserName = userInput, Message = messageInput, SentimentResult = sentiment };
+
+        await http.PostAsJsonAsync($"api/messages", message);
+    }
+    public async Task<Sentiment> GetSentimentResultAsync()
+    {
+        var response = await http.PostAsJsonAsync($"api/messages/analize-sentiment", messageInput);
+        var result = await response.Content.ReadFromJsonAsync<SentimentResult>();
+        return result?.Value ?? Sentiment.Neutral;
+
+    }
+}
